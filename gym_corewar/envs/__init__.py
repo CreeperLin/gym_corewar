@@ -1,0 +1,1 @@
+from gym_corewar.envs.corewar_env import CoreWarEnv
