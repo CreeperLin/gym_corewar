@@ -84,6 +84,7 @@ class CoreWarEnv(gym.Env):
   metadata = {'render.modes': ['human', 'rgb_array']}
 
   def __init__(self,
+        seed=None,
         std='icws_88', 
         act_type='direct',
         obs_type='full',
@@ -101,6 +102,9 @@ class CoreWarEnv(gym.Env):
       raise ValueError("specify path to opponent warriors")
     if (numplayers>2):
       raise ValueError("multi-warrior not supported")
+    self.seed = seed
+    if (not self.seed):
+      self.seed = np.random.randint(10000000)
     self.viewer = None
     self.core_size = coresize
     self.max_proc = maxprocesses
@@ -324,9 +328,8 @@ class CoreWarEnv(gym.Env):
 
   def reset(self):
     self._reset()
-    self.seed = np.random.randint(10000000)
     self.winners = []
-    self.opponent = self.opponents[1]
+    self.opponent = self.opponents[0]
     self.warrior = Corewar.Warrior()
     self.warrior.name = 'RL_Imp'
     self.warrior.author = 'my computer'
