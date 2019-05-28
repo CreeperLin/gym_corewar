@@ -97,6 +97,10 @@ class CoreWarEnv(gym.Env):
         opponents=None,
         numplayers=2,
         ):
+    if (not opponents or len(opponents) == 0):
+      raise ValueError("specify path to opponent warriors")
+    if (numplayers>2):
+      raise ValueError("multi-warrior not supported")
     self.viewer = None
     self.core_size = coresize
     self.max_proc = maxprocesses
@@ -167,10 +171,6 @@ class CoreWarEnv(gym.Env):
       raise ValueError("invalid standard")
 
     self.opponents = []
-    if (opponents == None):
-      opponents = ('warriors/88/Imp.red',
-      'warriors/88/Dwarf.red',
-      'warriors/88/MaxProcess.red')
     for i in range(len(opponents)):
       print('reading warrior in %s' % (opponents[i]))
       self.opponents.append(self.parser.parse_file(opponents[i]))
