@@ -1,0 +1,3 @@
+[submodule "PyCorewar"]
+	path = PyCorewar
+	url = https://github.com/CreeperLin/PyCorewar

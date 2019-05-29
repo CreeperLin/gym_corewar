@@ -17,6 +17,7 @@ if __name__=="__main__":
       # 'warriors/88/simplified/Dwarf.red',
       # 'warriors/88/simplified/MaxProcess.red'
     # )
+    verbose=True
   )
   obs = env.reset()
   steps = 0
@@ -27,7 +28,7 @@ if __name__=="__main__":
   epoch = int(1e7)
   for _ in range(epoch):
     print('step %d' % _)
-    env.render('rgb_array')
+    env.render('ansi')
     # env.render('human')
     a = env.action_space.sample()
     obs, r, done, info = env.step(a)
@@ -42,7 +43,7 @@ if __name__=="__main__":
     if done: break
   env.close()
   print('win %d lose %d tie %d' % (wins, loses, ties))
-  for i in len(env.winners):
+  for i in range(len(env.winners)):
     print('winner %d' % i)
-    for j in len(env.winners[i]):
+    for j in range(len(env.winners[i])):
       print(env.winners[i][j])

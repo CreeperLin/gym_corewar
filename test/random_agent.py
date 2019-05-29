@@ -26,19 +26,19 @@ if __name__ == '__main__':
         std='icws_88', 
         # act_type='direct',
         act_type='progressive',
-        coresize=8000,
-        maxprocesses=8000,
-        maxcycles=5000,
+        coresize=800,
+        maxprocesses=800,
+        maxcycles=2000,
         maxrounds=1000,
         dumpintv=4,
-        mindistance=100,
-        maxlength=100,
+        mindistance=20,
+        maxlength=20,
         opponents=(
           'warriors/88/simplified/Imp.red',
         #   'warriors/88/simplified/Dwarf.red',
         #   'warriors/88/simplified/MaxProcess.red'
         ),
-        # initwarrior='warriors/88/simplified/Imp.red',
+        initwarrior='warriors/88/simplified/Imp.red',
     )
 
     # You provide the directory to write to (can be an existing

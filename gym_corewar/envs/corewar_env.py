@@ -101,6 +101,8 @@ class CoreWarEnv(gym.Env):
         warriorname='RL_Imp',
         warriorauthor='my computer',
         numplayers=2,
+        verbose=False,
+        randomize=False
         ):
     if (not opponents and not isinstance(opponents, str) and len(opponents) == 0):
       raise ValueError("specify path to opponent warriors")
@@ -115,6 +117,8 @@ class CoreWarEnv(gym.Env):
     self.max_length = maxlength
     self.obs_dump_intv = dumpintv
     self.num_players = numplayers
+    self.verbose = verbose
+    self.randomize = randomize
     self.seed(seed)
     if (not self._seed):
       self.seed(0)
@@ -183,7 +187,7 @@ class CoreWarEnv(gym.Env):
     if isinstance(opponents, str):
       opponents = [opponents]
     for i in range(len(opponents)):
-      print('reading warrior in %s' % (opponents[i]))
+      self.dbgprint('reading warrior in %s' % (opponents[i]))
       self.opponents.append(self.parser.parse_file(opponents[i]))
 
     if (not initwarrior):
@@ -242,6 +246,9 @@ class CoreWarEnv(gym.Env):
     else:
       raise ValueError("invalid observation space type")
 
+  def dbgprint(self,*args):
+    if (self.verbose): print(*args)
+
   def _get_image(self):
     sc = 2
     row = 100
@@ -285,24 +292,24 @@ class CoreWarEnv(gym.Env):
     if (res!=0):
       raise ValueError("error opening MARS")
 
-    print('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self._seed))
+    self.dbgprint('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self._seed))
 
-    match = -1
+    self.match = -1
     while (True):
       if self.cycles >= self.max_cycle:
         break
       if (self.cycles % self.obs_dump_intv == 0):
-        # print('dump %d' % obs_cnt)
+        # self.dbgprint('dump %d' % obs_cnt)
         self.coredump[self.obs_cnt, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
         self.obs_cnt+=1
       
       res = self.mars.step()
       if (res==0):
-        print("warrior %d lose" % self.turn)
-        match = self.turn
+        self.dbgprint("warrior %d lose" % self.turn)
+        self.match = self.turn
         break
       else:
-        # print("warrior %d: %d" % (self.turn, res))
+        # self.dbgprint("warrior %d: %d" % (self.turn, res))
         if (self.cycles % self.num_players == 0):
           tmp = [0] * self.num_players
           tmp[0] = res
@@ -315,17 +322,17 @@ class CoreWarEnv(gym.Env):
       self.turn = (self.turn + 1) % self.num_players
     
     self.mars.stop()
-    print('cycle: %d' % (self.cycles))
+    self.dbgprint('cycle: %d' % (self.cycles))
 
-    if (match>0):
-      print('winner!')
-      print(self.warrior)
+    if (self.match>0):
+      self.dbgprint('winner!')
+      self.dbgprint(self.warrior)
       self.winners.append(self.warrior.instructions.copy())
 
     self.rounds += 1
     if (self.rounds >= self.max_rounds):
       done = True
-    return self._get_obs(), self._get_reward(), done, {'match':match}
+    return self._get_obs(), self._get_reward(), done, {'match':self.match}
 
   def _parse_act_prog(self, action):
     _pact, _pnum, _insn, _afield, _bfield = action
@@ -338,6 +345,7 @@ class CoreWarEnv(gym.Env):
     idx = _pnum
     # if (idx >= clen):
       # idx = clen - 1
+    print(_pact, _pnum, opcode, amode, bmode, afield, bfield)
     if _pact == 0: # NOOP
       return
     elif _pact == 1: # INSERT FRONT
@@ -405,18 +413,22 @@ class CoreWarEnv(gym.Env):
     c = self.sum_proc.shape[0]
     for i in range(self.sum_proc.shape[1]):
       dat = self.sum_proc[:,i]
-      print('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
+      self.dbgprint('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
     w1 = np.array([(1.2**(2*(i+1)/c))/(1.2**2) for i in range(c)])
     w2 = np.array([-1.0]*self.num_players)
-    w2[0] = 2.0
+    w2[0] = 1.0
     r_proc = np.dot (np.dot (w1, self.sum_proc), w2)
-    print('reward proc %f' % r_proc)
-    r_dura = self.cycles * 0.5
-    print('reward dura %f' % r_dura)
-    reward = r_proc + r_dura
-    print('reward %f' % reward)
+    self.dbgprint('score proc %f' % r_proc)
+    r_dura = 10 * self.cycles / self.max_cycle
+    self.dbgprint('score dura %f' % r_dura)
+    r_goal = 500 if self.match > 0 else -500 if self.match == 0 else 0
+    self.dbgprint('score goal %f' % r_goal)
+    score = r_proc + r_dura + r_goal
+    ret = score - self.last_score
+    self.dbgprint('score %f reward %f' % (score, ret))
+    self.last_score = score
     
-    return reward
+    return ret
 
   def _reset(self):
     self.turn = 0
@@ -424,11 +436,14 @@ class CoreWarEnv(gym.Env):
     self.obs_cnt = 0
     self.sum_proc = np.ones((1, self.num_players), dtype=np.int32)
     self.coredump = np.zeros((self.dim_obs_sample, self.core_size, 3))
+    if (self.randomize):
+      self._seed = np.random.randint(low=2*self.min_dist, high=self.core_size)
 
   def reset(self):
     self._reset()
     self.rounds = 0
     self.winners = []
+    self.last_score = 0
     self.opponent = self.opponents[0]
     res = self.mars.open((self.warrior, self.opponent), seed = self._seed)
     self.coredump[0, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
