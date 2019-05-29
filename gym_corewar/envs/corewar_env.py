@@ -206,13 +206,19 @@ class CoreWarEnv(gym.Env):
       self.dim_action_insn = (self.max_length, )
       self.dim_action_field = (self.max_length, 2)
       self._parse_act = self._parse_act_direct
-      self.action_space = Tuple((
-                                Box(low=0, high=self.num_insn-1,
-                                    shape=self.dim_action_insn, dtype=np.uint16),
-                                # Box(low=-self.core_size/2+1, high=self.core_size/2,
-                                Box(low=0, high=self.core_size-1,
-                                    shape=self.dim_action_field, dtype=np.uint16)))
+      # self.action_space = Tuple((
+      #                           Box(low=0, high=self.num_insn-1,
+      #                               shape=self.dim_action_insn, dtype=np.uint16),
+      #                           # Box(low=-self.core_size/2+1, high=self.core_size/2,
+      #                           Box(low=0, high=self.core_size-1,
+      #                               shape=self.dim_action_field, dtype=np.uint16)))
+      self.action_space = MultiDiscrete([self.num_insn]*self.max_length+[self.core_size]*self.max_length+[self.core_size]*self.max_length)
     elif (act_type=='progressive'):
+      self.insns = []
+      for i in range(len(self.warrior.instructions)):
+        self.insns.append(self.warrior.instructions[i])
+      for i in range(self.max_length-len(self.insns)):
+        self.insns.append(None)
       self._parse_act = self._parse_act_prog
       self.action_space = MultiDiscrete([dim_progress_act, self.max_length,
                                         self.num_insn, self.core_size, self.core_size])
@@ -330,32 +336,47 @@ class CoreWarEnv(gym.Env):
     afield = int(_afield)
     bfield = int(_bfield)
     idx = _pnum
-    if (idx > clen):
-      idx = clen
+    # if (idx >= clen):
+      # idx = clen - 1
     if _pact == 0: # NOOP
       return
     elif _pact == 1: # INSERT FRONT
-      if (clen>=self.max_length):
-        return
+      # if (clen>=self.max_length):
+        # return
       insn = self._get_inst(coresize = self.core_size)
       insn.opcode = opcode
       insn.amode = amode
       insn.bmode = bmode
       insn.afield = afield
       insn.bfield = bfield
-      self.warrior.instructions.insert(idx, insn)
+      self.insns[idx] = insn
+      # self.warrior.instructions.insert(idx, insn)
     elif _pact == 2: # DELETE FRONT
-      if clen > 1:
-        if (idx == clen):
-          idx -= 1
-        self.warrior.instructions.pop(idx)
+      # if clen > 1:
+        # if (idx == clen):
+          # idx -= 1
+        # self.warrior.instructions.pop(idx)
+      self.insns[idx] = None
     # elif _pact == 3: # MODIFY FRONT
       # self.warrior.instructions[i] = insn
     else:
       raise ValueError("undefined prog_act")
 
+    self.warrior.instructions.clear()
+    for i in range(len(self.insns)):
+      if (not self.insns[i]): continue
+      self.warrior.instructions.append(self.insns[i])
+    if (len(self.warrior.instructions)==0):
+      insn = self._get_inst(self.core_size)
+      self.warrior.instructions.append(insn)
+
   def _parse_act_direct(self, action):
-    _insn, _field = action
+    # _insn, _field = action
+    # _afield = _field[:,0]
+    # _bfield = _field[:,1]
+    _insn = action[0:self.max_length]
+    _afield = action[self.max_length:2*self.max_length]
+    _bfield = action[2*self.max_length:3*self.max_length]
     clen = _insn.shape[0]
     self.warrior.instructions.clear()
     for i in range(clen):
@@ -363,8 +384,8 @@ class CoreWarEnv(gym.Env):
       insn.opcode = OPCODES[self._OPCODE(_insn[i])]
       insn.amode = MODES[self._AMODE(_insn[i])]
       insn.bmode = MODES[self._BMODE(_insn[i])]
-      insn.afield = int(_field[i,0])
-      insn.bfield = int(_field[i,1])
+      insn.afield = int(_afield[i])
+      insn.bfield = int(_bfield[i])
       self.warrior.instructions.append(insn)
     self.warrior.start = int(self.max_length / 2)
 
@@ -375,7 +396,7 @@ class CoreWarEnv(gym.Env):
     return 0
 
   def _get_obs_full(self):
-    return (self.coredump[:,:,0], self.coredump[:,:,1:])
+    return {'insns':self.coredump[:,:,0], 'fields':self.coredump[:,:,1:]}
 
   def _get_obs_warrior(self):
     raise ValueError("not supported")
@@ -385,12 +406,12 @@ class CoreWarEnv(gym.Env):
     for i in range(self.sum_proc.shape[1]):
       dat = self.sum_proc[:,i]
       print('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
-    w1 = np.array([(2**(10*(i+1)/c))/(2**10) for i in range(c)])
-    w2 = np.array([-0.1]*self.num_players)
-    w2[0] = 0.2
+    w1 = np.array([(1.2**(2*(i+1)/c))/(1.2**2) for i in range(c)])
+    w2 = np.array([-1.0]*self.num_players)
+    w2[0] = 2.0
     r_proc = np.dot (np.dot (w1, self.sum_proc), w2)
     print('reward proc %f' % r_proc)
-    r_dura = self.cycles * 0.05
+    r_dura = self.cycles * 0.5
     print('reward dura %f' % r_dura)
     reward = r_proc + r_dura
     print('reward %f' % reward)
@@ -419,12 +440,11 @@ class CoreWarEnv(gym.Env):
     outfile = StringIO() if mode == 'ansi' else sys.stdout
     outfile.write(str(self.warrior))
     outfile.write('\n')
-    img = self._get_image()
     if mode == 'rgb_array':
-      # import cv2
-      # cv2.imwrite('core.png', img)
+      img = self._get_image()
       return img
     elif mode == 'human':
+      img = self._get_image()
       from gym.envs.classic_control import rendering
       if self.viewer is None:
         self.viewer = rendering.SimpleImageViewer()
