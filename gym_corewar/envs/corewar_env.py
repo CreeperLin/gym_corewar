@@ -3,7 +3,7 @@ import os
 import numpy as np
 import gym
 from gym import error, spaces, utils
-from gym.spaces import Discrete, Tuple, Box, MultiDiscrete
+from gym.spaces import Discrete, Tuple, Box, MultiDiscrete, Dict
 from gym.utils import seeding
 import Corewar
 import Corewar.Benchmarking
@@ -78,41 +78,46 @@ dim_addrmodes_88 = 4
 dim_addrmodes_94_nop = 8
 dim_addrmodes_94 = 8
 valid_pseudoopcodes = ('org', 'end', 'for', 'rof', 'equ', 'pin')
-dim_progress = 3
+dim_progress_act = 3
 
 class CoreWarEnv(gym.Env):
-  metadata = {'render.modes': ['human', 'rgb_array']}
+  metadata = {'render.modes': ['human', 'rgb_array', 'ansi']}
 
   def __init__(self,
         seed=None,
         std='icws_88', 
-        act_type='direct',
+        act_type='progressive',
         obs_type='full',
         coresize=8000,
         maxprocesses=8000,
         maxcycles=10000,
-        dumpintv=100,
+        maxrounds=1000,
+        dumpintv=5,
         mindistance=25,
         maxlength=25,
         pspacesize=None,
-        opponents=None,
+        opponents='warriors/88/simplified/Imp.red',
+        initwarrior=None,
+        warriorname='RL_Imp',
+        warriorauthor='my computer',
         numplayers=2,
         ):
-    if (not opponents or len(opponents) == 0):
+    if (not opponents and not isinstance(opponents, str) and len(opponents) == 0):
       raise ValueError("specify path to opponent warriors")
     if (numplayers>2):
       raise ValueError("multi-warrior not supported")
-    self.seed = seed
-    if (not self.seed):
-      self.seed = np.random.randint(10000000)
     self.viewer = None
     self.core_size = coresize
     self.max_proc = maxprocesses
     self.max_cycle = maxcycles
+    self.max_rounds = maxrounds
     self.min_dist = mindistance
     self.max_length = maxlength
     self.obs_dump_intv = dumpintv
     self.num_players = numplayers
+    self.seed(seed)
+    if (not self._seed):
+      self.seed(0)
 
     if std=='icws_88':
       self.dim_opcode = dim_opcode_88
@@ -175,9 +180,26 @@ class CoreWarEnv(gym.Env):
       raise ValueError("invalid standard")
 
     self.opponents = []
+    if isinstance(opponents, str):
+      opponents = [opponents]
     for i in range(len(opponents)):
       print('reading warrior in %s' % (opponents[i]))
       self.opponents.append(self.parser.parse_file(opponents[i]))
+
+    if (not initwarrior):
+      self.warrior = Corewar.Warrior()
+      self.warrior.start = 0
+      insn = self._get_inst(self.core_size)
+      insn.opcode = OPCODES[0]
+      insn.amode = MODES[0]
+      insn.bmode = MODES[0]
+      insn.afield = 0
+      insn.bfield = 0 
+      self.warrior.instructions.append(insn)
+    else:
+      self.warrior = self.parser.parse_file(initwarrior)
+    self.warrior.name = warriorname
+    self.warrior.author = warriorauthor
 
     self.num_insn = self.dim_opcode*self.dim_addrmodes*self.dim_addrmodes
     if (act_type=='direct'):
@@ -192,10 +214,8 @@ class CoreWarEnv(gym.Env):
                                     shape=self.dim_action_field, dtype=np.uint16)))
     elif (act_type=='progressive'):
       self._parse_act = self._parse_act_prog
-      self.action_space = Tuple((
-                                Discrete(dim_progress),
-                                Box(low=np.array([0, 0, 0]), 
-                                    high=np.array([self.num_insn-1, self.core_size-1, self.core_size-1]), dtype=np.uint16)))
+      self.action_space = MultiDiscrete([dim_progress_act, self.max_length,
+                                        self.num_insn, self.core_size, self.core_size])
     else:
       raise ValueError("invalid action space type")
                             
@@ -204,47 +224,76 @@ class CoreWarEnv(gym.Env):
       self._get_obs = self._get_obs_full
       self.dim_obs_insn  = (self.dim_obs_sample, self.core_size, )
       self.dim_obs_field = (self.dim_obs_sample, self.core_size, 2)
-      self.observation_space = Tuple((
-                                Box(low=0, high=self.num_insn-1, 
+      self.observation_space = Dict({
+                                'insns': Box(low=0, high=self.num_insn-1, 
                                     shape=self.dim_obs_insn, dtype=np.uint16),
                                 # Box(low=-self.core_size/2+1, high=self.core_size/2,
-                                Box(low=0, high=self.core_size-1,
-                                    shape=self.dim_obs_field, dtype=np.uint16)))
+                                'fields':Box(low=0, high=self.core_size-1,
+                                    shape=self.dim_obs_field, dtype=np.uint16)
+                                })
     elif (obs_type == 'warriors'):
       raise ValueError("obs space type not supported")
     else:
       raise ValueError("invalid observation space type")
-    
-    self.turn = -1
 
   def _get_image(self):
-    return None
+    sc = 2
+    row = 100
+    img_w = row * sc
+    img_h = self.core_size // row * sc
+    img = np.zeros((img_h, img_w, 3), dtype=np.uint8)
+    palette = np.array([
+      [0,0,0],
+      [255,255,255],
+      [0,255,0],
+      [0,0,255],
+      [255,255,0],
+      [255,0,255],
+      [0,255,255],
+      [255,0,0],
+      [128,128,128],
+      [128,255,255],
+      [255,128,255],
+      [255,255,128],
+    ], dtype=np.uint8)
+    # last_obs = self.cycles // self.obs_dump_intv
+    cd = self.coredump[self.obs_cnt-1,:,0]
+    for i in range(self.core_size):
+      p = palette[self._OPCODE(int(cd[i]))]
+      ys = i // row
+      xs = i % row
+      for y in range(ys*sc, (ys+1)*sc):
+        for x in range(xs*sc, (xs+1)*sc):
+          img[y][x] = p
+    return img
 
   def step(self, action):
-    if (self.turn==-1):
-      raise ValueError("needs reset")
-    
+    self._reset()
     done = False
 
     self._parse_act(action)
 
-    # res = self.mars.open((self.opponent, self.opponent), seed = self.seed)
-    res = self.mars.open((self.warrior, self.opponent), seed = self.seed)
+    # res = self.mars.open((self.opponent, self.opponent), seed = self._seed)
+    res = self.mars.open((self.warrior, self.opponent), seed = self._seed)
     
     if (res!=0):
       raise ValueError("error opening MARS")
 
-    print('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self.seed))
+    print('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self._seed))
 
     match = -1
-    obs_cnt = 0
     while (True):
+      if self.cycles >= self.max_cycle:
+        break
+      if (self.cycles % self.obs_dump_intv == 0):
+        # print('dump %d' % obs_cnt)
+        self.coredump[self.obs_cnt, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
+        self.obs_cnt+=1
+      
       res = self.mars.step()
       if (res==0):
         print("warrior %d lose" % self.turn)
         match = self.turn
-        break
-      if self.cycles >= self.max_cycle:
         break
       else:
         # print("warrior %d: %d" % (self.turn, res))
@@ -255,12 +304,9 @@ class CoreWarEnv(gym.Env):
         else:
           self.sum_proc[int(self.cycles // self.num_players)+1][self.turn] = res
 
+
       self.cycles += 1
       self.turn = (self.turn + 1) % self.num_players
-
-      if (self.cycles % self.obs_dump_intv == 0):
-        self.coredump[obs_cnt, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
-        obs_cnt+=1
     
     self.mars.stop()
     print('cycle: %d' % (self.cycles))
@@ -270,13 +316,43 @@ class CoreWarEnv(gym.Env):
       print(self.warrior)
       self.winners.append(self.warrior.instructions.copy())
 
-    s = self._get_obs()
-    r = self._get_reward()
-    self._reset()
-    return s, r, done, {'match':match}
+    self.rounds += 1
+    if (self.rounds >= self.max_rounds):
+      done = True
+    return self._get_obs(), self._get_reward(), done, {'match':match}
 
   def _parse_act_prog(self, action):
-    raise ValueError("not supported")
+    _pact, _pnum, _insn, _afield, _bfield = action
+    clen = len(self.warrior.instructions)
+    opcode = OPCODES[self._OPCODE(_insn)]
+    amode = MODES[self._AMODE(_insn)]
+    bmode = MODES[self._BMODE(_insn)]
+    afield = int(_afield)
+    bfield = int(_bfield)
+    idx = _pnum
+    if (idx > clen):
+      idx = clen
+    if _pact == 0: # NOOP
+      return
+    elif _pact == 1: # INSERT FRONT
+      if (clen>=self.max_length):
+        return
+      insn = self._get_inst(coresize = self.core_size)
+      insn.opcode = opcode
+      insn.amode = amode
+      insn.bmode = bmode
+      insn.afield = afield
+      insn.bfield = bfield
+      self.warrior.instructions.insert(idx, insn)
+    elif _pact == 2: # DELETE FRONT
+      if clen > 1:
+        if (idx == clen):
+          idx -= 1
+        self.warrior.instructions.pop(idx)
+    # elif _pact == 3: # MODIFY FRONT
+      # self.warrior.instructions[i] = insn
+    else:
+      raise ValueError("undefined prog_act")
 
   def _parse_act_direct(self, action):
     _insn, _field = action
@@ -290,6 +366,7 @@ class CoreWarEnv(gym.Env):
       insn.afield = int(_field[i,0])
       insn.bfield = int(_field[i,1])
       self.warrior.instructions.append(insn)
+    self.warrior.start = int(self.max_length / 2)
 
   def _get_obs_none(self):
     return (np.zeros(shape=self.dim_obs_insn, dtype=np.uint16), np.zeros(shape=self.dim_obs_field, dtype=np.uint16))
@@ -313,7 +390,7 @@ class CoreWarEnv(gym.Env):
     w2[0] = 0.2
     r_proc = np.dot (np.dot (w1, self.sum_proc), w2)
     print('reward proc %f' % r_proc)
-    r_dura = c * 0.05
+    r_dura = self.cycles * 0.05
     print('reward dura %f' % r_dura)
     reward = r_proc + r_dura
     print('reward %f' % reward)
@@ -323,36 +400,31 @@ class CoreWarEnv(gym.Env):
   def _reset(self):
     self.turn = 0
     self.cycles = 0
+    self.obs_cnt = 0
     self.sum_proc = np.ones((1, self.num_players), dtype=np.int32)
     self.coredump = np.zeros((self.dim_obs_sample, self.core_size, 3))
 
   def reset(self):
     self._reset()
+    self.rounds = 0
     self.winners = []
     self.opponent = self.opponents[0]
-    self.warrior = Corewar.Warrior()
-    self.warrior.name = 'RL_Imp'
-    self.warrior.author = 'my computer'
-    self.warrior.start = int(self.max_length / 2)
-    for i in range(self.max_length):
-      insn = self._get_inst(self.core_size)
-      insn.opcode = OPCODES[0]
-      insn.amode = MODES[0]
-      insn.bmode = MODES[0]
-      insn.afield = 0
-      insn.bfield = 0 
-      self.warrior.instructions.append(insn)
-    res = self.mars.open((self.warrior, self.opponent), seed = self.seed)
+    res = self.mars.open((self.warrior, self.opponent), seed = self._seed)
     self.coredump[0, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
     self.mars.stop()
     return self._get_obs()
 
-  def render(self, mode='human', close=False):
+  def render(self, mode='human'):
+    from six import StringIO
+    outfile = StringIO() if mode == 'ansi' else sys.stdout
+    outfile.write(str(self.warrior))
+    outfile.write('\n')
     img = self._get_image()
     if mode == 'rgb_array':
+      # import cv2
+      # cv2.imwrite('core.png', img)
       return img
     elif mode == 'human':
-      return img
       from gym.envs.classic_control import rendering
       if self.viewer is None:
         self.viewer = rendering.SimpleImageViewer()
@@ -364,35 +436,6 @@ class CoreWarEnv(gym.Env):
       self.viewer.close()
       self.viewer = None
 
-
-if __name__=="__main__":
-  env = CoreWarEnv(std='icws_88')
-  print('init\n')
-  obs = env.reset()
-  print('reset\n')
-  steps = 0
-  total_reward = 0
-  wins = 0
-  loses = 0
-  ties = 0
-  epoch = int(1e7)
-  for _ in range(epoch):
-    print('step %d' % _)
-    env.render()
-    a = env.action_space.sample()
-    obs, r, done, info = env.step(a)
-    m = info['match']
-    if (m==-1): ties += 1
-    elif (m==0): loses += 1
-    else: wins += 1
-    if steps % 20 == 0 or done:
-      print("\n### step {} total_reward {:+0.2f}".format(steps, total_reward))
-    steps += 1
-    total_reward += r
-    if done: break
-  env.close()
-  print('win %d lose %d tie %d' % (wins, loses, ties))
-  for i in len(env.winners):
-    print('winner %d' % i)
-    for j in len(env.winners[i]):
-      print(env.winners[i][j])
+  def seed(self, s):
+    np.random.seed(s)
+    self._seed = np.random.randint(low=2*self.min_dist, high=self.core_size)
