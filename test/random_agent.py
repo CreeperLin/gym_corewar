@@ -26,7 +26,7 @@ if __name__ == '__main__':
         std='icws_88', 
         # act_type='direct',
         act_type='progressive',
-        coresize=800,
+        coresize=1024,
         maxprocesses=800,
         maxcycles=2000,
         maxrounds=1000,

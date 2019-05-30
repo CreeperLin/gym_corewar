@@ -221,23 +221,27 @@ def main(args, **env_kwargs):
         dones = np.zeros((1,))
 
         episode_rew = 0
+        wins = 0
+        loses = 0
+        ties = 0
         while True:
             if state is not None:
                 actions, _, state, _ = model.step(obs,S=state, M=dones)
             else:
                 actions, _, _, _ = model.step(obs)
 
-            obs, rew, done, _ = env.step(actions)
+            obs, rew, done, info = env.step(actions)
+            m = info[0]['match']
+            if (m==-1): ties += 1
+            elif (m==0): loses += 1
+            else: wins += 1
             episode_rew += rew[0] if isinstance(env, VecEnv) else rew
             env.render()
             done = done.any() if isinstance(done, np.ndarray) else done
             if done:
-                print('episode_rew={}'.format(episode_rew))
-                episode_rew = 0
-                obs = env.reset()
-
+                break
     env.close()
-
+    print('win %d lose %d tie %d' % (wins, loses, ties))
     return model
 
 if __name__ == '__main__':
@@ -246,7 +250,12 @@ if __name__ == '__main__':
     # env_id = 'CartPole-v0'
 
     alg = 'a2c'
-    main(['--alg='+alg,'--env='+env_id, '--num_timesteps='+'1e6'],
+    main(['--alg='+alg,
+        '--env='+env_id,
+        '--num_timesteps='+'1e6',
+        '--save_video_interval='+'10000',
+        '--play',
+        ],
         std='icws_88', 
         # act_type='direct',
         act_type='progressive',
@@ -259,11 +268,11 @@ if __name__ == '__main__':
         maxlength=16,
         opponents=(
           'warriors/88/simplified/Imp.red',
-          'warriors/88/simplified/Dwarf.red',
-          'warriors/88/simplified/MaxProcess.red'
+        #   'warriors/88/simplified/Dwarf.red',
+        #   'warriors/88/simplified/MaxProcess.red'
         ),
         # initwarrior='warriors/88/simplified/Imp.red',
-        verbose=True,
-        randomize=False
+        verbose=False,
+        randomize=True
     )
 
