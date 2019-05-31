@@ -253,8 +253,7 @@ class CoreWarEnv(gym.Env):
   def log(self,*args):
     if (self.verbose): print(*args)
 
-  def _get_image(self):
-    sc = 2
+  def _get_image(self, sc=10, idx=0):
     row = int(np.sqrt(self.core_size))
     img_w = row * sc
     img_h = self.core_size // row * sc
@@ -273,15 +272,12 @@ class CoreWarEnv(gym.Env):
       [255,128,255],
       [255,255,128],
     ], dtype=np.uint8)
-    # last_obs = self.cycles // self.obs_dump_intv
-    cd = self._OPCODE(self.coredump[self.obs_cnt-1,:,0])
+    cd = self._OPCODE(self.coredump[idx,:,0])
     for i in range(self.core_size):
       p = palette[cd[i]]
       ys = i // row
       xs = i % row
-      for y in range(ys*sc, (ys+1)*sc):
-        for x in range(xs*sc, (xs+1)*sc):
-          img[y][x] = p
+      img[ys*sc:(ys+1)*sc,xs*sc:(xs+1)*sc,:] = p
     return img
 
   def step(self, action):
@@ -336,7 +332,9 @@ class CoreWarEnv(gym.Env):
         dat = self.sum_proc[:,i]
         print('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
       print(self.warrior)
-      self.winners.append(self.warrior.instructions.copy())
+      if (self.cycles > self.max_cycle // 2):
+        self.record_coredump()
+        self.winners.append(self.warrior.instructions.copy())
 
     self.rounds += 1
     if (self.rounds >= self.max_rounds):
@@ -431,10 +429,11 @@ class CoreWarEnv(gym.Env):
     self.log('score proc %f' % r_proc)
     r_dura = 100 * self.cycles / self.max_cycle
     self.log('score dura %f' % r_dura)
-    r_goal = 200 if self.match > 0 else 0 if self.match == 0 else 50
+    r_goal = 1 if self.match > 0 else 0 if self.match == 0 else 0.25
+    r_goal = 1000 * r_goal * self.cycles / self.max_cycle
     self.log('score goal %f' % r_goal)
     score = r_proc + r_dura + r_goal
-    ret = score - self.last_score + (200 if self.match > 0 else 0)
+    ret = score - self.last_score + 1000 * (1 if self.match > 0 else 0) * self.cycles / self.max_cycle
     self.log('score %f reward %f' % (score, ret))
     self.last_score = score
     
@@ -461,20 +460,37 @@ class CoreWarEnv(gym.Env):
     return self._get_obs()
 
   def render(self, mode='human'):
-    from six import StringIO
-    outfile = StringIO() if mode == 'ansi' else sys.stdout
-    outfile.write(str(self.warrior))
-    outfile.write('\n')
+    if mode == 'ansi':
+      from six import StringIO
+      outfile = StringIO()
+      outfile.write(str(self.warrior))
+      outfile.write('\n')
+      return outfile
     if mode == 'rgb_array':
-      img = self._get_image()
+      img = self._get_image(idx=self.obs_cnt-1)
       return img
-    elif mode == 'human':
-      img = self._get_image()
+    if mode == 'human':
+      img = self._get_image(idx=self.obs_cnt-1)
       from gym.envs.classic_control import rendering
       if self.viewer is None:
         self.viewer = rendering.SimpleImageViewer()
       self.viewer.imshow(img)
       return self.viewer.isopen
+
+  def record_coredump(self):
+    import cv2
+    fps = 24
+    name = 'winner'+str(len(self.winners))
+    sc = 20
+    row = int(np.sqrt(self.core_size))
+    img_w = row * sc
+    img_h = self.core_size // row * sc
+    size = (img_w, img_h)
+    out = cv2.VideoWriter(str(name) + '.mp4', cv2.VideoWriter_fourcc('m', 'p', '4', 'v'), fps, size)
+    for i in range(self.obs_cnt):
+      frame = self._get_image(sc=sc,idx=i)
+      out.write(frame)
+    out.release()
 
   def close(self):
     if self.viewer is not None:

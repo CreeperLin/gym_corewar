@@ -10,13 +10,13 @@ if __name__=="__main__":
     # maxprocesses=8000,
     # maxcycles=10000,
     # dumpintv=100,
-    # mindistance=25,
-    # maxlength=25,
-    # opponents=(
+    mindistance=32,
+    maxlength=32,
+    opponents=(
       # 'warriors/88/simplified/Imp.red',
       # 'warriors/88/simplified/Dwarf.red',
-      # 'warriors/88/simplified/MaxProcess.red'
-    # )
+      'warriors/88/simplified/Simple_88.red'
+    ),
     verbose=True
   )
   obs = env.reset()
@@ -28,8 +28,8 @@ if __name__=="__main__":
   epoch = int(1e7)
   for _ in range(epoch):
     print('step %d' % _)
-    env.render('ansi')
-    # env.render('human')
+    # env.render('ansi')
+    env.render('human')
     a = env.action_space.sample()
     obs, r, done, info = env.step(a)
     m = info['match']
