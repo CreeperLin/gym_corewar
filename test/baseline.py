@@ -253,7 +253,7 @@ if __name__ == '__main__':
     main(['--alg='+alg,
         '--env='+env_id,
         '--num_timesteps='+'1e6',
-        '--save_video_interval='+'10000',
+        # '--save_video_interval='+'10000',
         '--play',
         ],
         std='icws_88', 
@@ -262,14 +262,14 @@ if __name__ == '__main__':
         coresize=256,
         maxprocesses=100,
         maxcycles=400,
-        maxrounds=10000,
+        maxsteps=10000,
         dumpintv=1,
-        mindistance=16,
-        maxlength=16,
+        mindistance=64,
+        maxlength=32,
         opponents=(
-          'warriors/88/simplified/Imp.red',
+          'warriors/88/simplified/Simple_88.red',
         #   'warriors/88/simplified/Dwarf.red',
-        #   'warriors/88/simplified/MaxProcess.red'
+        #   'warriors/88/simplified/Imp.red'
         ),
         # initwarrior='warriors/88/simplified/Imp.red',
         verbose=False,

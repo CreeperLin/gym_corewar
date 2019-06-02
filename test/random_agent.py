@@ -29,7 +29,7 @@ if __name__ == '__main__':
         coresize=1024,
         maxprocesses=800,
         maxcycles=2000,
-        maxrounds=1000,
+        maxsteps=1000,
         dumpintv=4,
         mindistance=20,
         maxlength=20,

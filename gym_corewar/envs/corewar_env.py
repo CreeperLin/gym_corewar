@@ -89,12 +89,12 @@ class CoreWarEnv(gym.Env):
         act_type='progressive',
         obs_type='full',
         coresize=8000,
-        fieldrange=8000,
+        fieldrange=None,
         maxprocesses=8000,
         maxcycles=10000,
         maxsteps=1000,
         dumpintv=5,
-        dumprange=4000,
+        dumprange=None,
         mindistance=25,
         maxlength=25,
         pspacesize=None,
@@ -114,14 +114,19 @@ class CoreWarEnv(gym.Env):
       raise ValueError("mindistance > coresize")
     self.viewer = None
     self.core_size = coresize
-    self.field_range = fieldrange % coresize
+    if not fieldrange:
+      self.field_range = coresize
+    else:
+      self.field_range = fieldrange % coresize
     self.max_proc = maxprocesses
     self.max_cycle = maxcycles
     self.max_steps = maxsteps
     self.min_dist = mindistance
     self.max_length = maxlength
     self.obs_dump_intv = dumpintv
-    if (dumprange > self.core_size // 2):
+    if not dumprange:
+      dumprange = self.core_size
+    elif (dumprange > self.core_size // 2):
       dumprange = self.core_size // 2
     self.obs_dump_range = dumprange
     self.num_players = numplayers
@@ -214,11 +219,11 @@ class CoreWarEnv(gym.Env):
       #                           # Box(low=-self.core_size/2+1, high=self.core_size/2,
       #                           Box(low=0, high=self.core_size-1,
       #                               shape=self.dim_action_field, dtype=np.uint16)))
-      self.action_space = MultiDiscrete([self.num_insn]*self.max_length+[self.core_size]*self.max_length+[self.core_size]*self.max_length)
+      self.action_space = MultiDiscrete([self.num_insn]*self.max_length+[self.field_range]*self.max_length+[self.field_range]*self.max_length)
     elif (act_type=='progressive'):
       self._parse_act = self._parse_act_prog
       self.action_space = MultiDiscrete([dim_progress_act, self.max_length,
-                                        self.num_insn, self.core_size, self.core_size])
+                                        self.num_insn, self.field_range, self.field_range])
     else:
       raise ValueError("invalid action space type")
                             
@@ -236,7 +241,10 @@ class CoreWarEnv(gym.Env):
                                     shape=self.dim_obs_insn, dtype=np.uint8),
                                 # Box(low=-self.core_size/2+1, high=self.core_size/2,
                                 'fields':Box(low=0, high=self.core_size-1,
-                                    shape=self.dim_obs_field, dtype=np.uint16)
+                                    shape=self.dim_obs_field, dtype=np.uint16),
+                                'proc': Box(low=0, high=self.core_size-1, 
+                                            shape=(self.dim_obs_sample, self.max_proc * self.num_players),
+                                            dtype=np.uint16)
                                 })
     elif (obs_type == 'warriors'):
       raise ValueError("obs space type not supported")
@@ -246,8 +254,7 @@ class CoreWarEnv(gym.Env):
   def log(self,*args):
     if (self.verbose): print(*args)
 
-  def _get_image(self):
-    sc = 2
+  def _get_image(self, sc=10, idx=0):
     row = int(np.sqrt(self.core_size))
     img_w = row * sc
     img_h = self.core_size // row * sc
@@ -266,15 +273,12 @@ class CoreWarEnv(gym.Env):
       [255,128,255],
       [255,255,128],
     ], dtype=np.uint8)
-    # last_obs = self.cycles // self.obs_dump_intv
-    cd = self._OPCODE(self.coredump[self.obs_cnt-1,:,0])
+    cd = self._OPCODE(self.coredump[idx,:,0])
     for i in range(self.core_size):
       p = palette[cd[i]]
       ys = i // row
       xs = i % row
-      for y in range(ys*sc, (ys+1)*sc):
-        for x in range(xs*sc, (xs+1)*sc):
-          img[y][x] = p
+      img[ys*sc:(ys+1)*sc,xs*sc:(xs+1)*sc,:] = p
     return img
 
   def step(self, action):
@@ -297,6 +301,7 @@ class CoreWarEnv(gym.Env):
       if (self.cycles % self.obs_dump_intv == 0):
         # self.log('dump %d' % obs_cnt)
         self.coredump[self.obs_cnt, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
+        # self.procdump[self.obs_cnt, :] = np.array(self.mars.dumpproc(), dtype=np.uint16)
         self.obs_cnt+=1
       
       res = self.mars.step()
@@ -328,7 +333,9 @@ class CoreWarEnv(gym.Env):
         dat = self.sum_proc[:,i]
         print('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
       print(self.warrior)
-      self.winners.append(self.warrior.instructions.copy())
+      if (self.cycles > self.max_cycle // 2):
+        self.record_coredump()
+        self.winners.append(self.warrior.instructions.copy())
 
     self.steps += 1
     if (self.steps >= self.max_steps):
@@ -407,7 +414,8 @@ class CoreWarEnv(gym.Env):
     cdwindow = np.concatenate((self.coredump[:,-self.obs_dump_range:,:], self.coredump[:,:self.obs_dump_range,:]), axis=1)
     insns = cdwindow[:,:,0]
     # return {'insns':insns, 'fields':self.coredump[:,:,1:]}
-    return {'op':self._OPCODE(insns), 'amode':self._AMODE(insns), 'bmode':self._BMODE(insns), 'fields':cdwindow[:,:,1:]}
+    return {'op':self._OPCODE(insns), 'amode':self._AMODE(insns), 'bmode':self._BMODE(insns), 'fields':cdwindow[:,:,1:],
+            'proc':self.procdump}
 
   def _get_obs_warrior(self):
     raise ValueError("not supported")
@@ -424,10 +432,11 @@ class CoreWarEnv(gym.Env):
     self.log('score proc %f' % r_proc)
     r_dura = 100 * self.cycles / self.max_cycle
     self.log('score dura %f' % r_dura)
-    r_goal = 200 if self.match > 0 else 0 if self.match == 0 else 50
+    r_goal = 1 if self.match > 0 else 0 if self.match == 0 else 0.25
+    r_goal = 1000 * r_goal * self.cycles / self.max_cycle
     self.log('score goal %f' % r_goal)
     score = r_proc + r_dura + r_goal
-    ret = score - self.last_score + (200 if self.match > 0 else 0)
+    ret = score - self.last_score + 1000 * (1 if self.match > 0 else 0) * self.cycles / self.max_cycle
     self.log('score %f reward %f' % (score, ret))
     self.last_score = score
     
@@ -439,6 +448,7 @@ class CoreWarEnv(gym.Env):
     self.obs_cnt = 0
     self.sum_proc = np.ones((1, self.num_players), dtype=np.uint16)
     self.coredump = np.zeros((self.dim_obs_sample, self.core_size, 3), dtype=np.uint16)
+    self.procdump = np.zeros((self.dim_obs_sample, self.max_proc * self.num_players), dtype=np.uint16)
     if (self.randomize):
       self._seed = np.random.randint(low=self.min_dist, high=self.core_size)
 
@@ -461,7 +471,7 @@ class CoreWarEnv(gym.Env):
       insn = self._get_inst(self.core_size)
       self.warrior.instructions.append(insn)
     else:
-      self.warrior = self.parser.parse_file(initwarrior)
+      self.warrior = self.parser.parse_file(self.init_warrior)
     self.warrior.name = self.wname
     self.warrior.author = self.wauthor
     self.insns = []
@@ -477,16 +487,31 @@ class CoreWarEnv(gym.Env):
       outfile.write(str(self.warrior))
       outfile.write('\n')
       return outfile
-    elif mode == 'rgb_array':
-      img = self._get_image()
+    if mode == 'rgb_array':
+      img = self._get_image(idx=self.obs_cnt-1)
       return img
-    elif mode == 'human':
-      img = self._get_image()
+    if mode == 'human':
+      img = self._get_image(idx=self.obs_cnt-1)
       from gym.envs.classic_control import rendering
       if self.viewer is None:
         self.viewer = rendering.SimpleImageViewer()
       self.viewer.imshow(img)
       return self.viewer.isopen
+
+  def record_coredump(self):
+    import cv2
+    fps = 24
+    name = 'winner'+str(len(self.winners))
+    sc = 20
+    row = int(np.sqrt(self.core_size))
+    img_w = row * sc
+    img_h = self.core_size // row * sc
+    size = (img_w, img_h)
+    out = cv2.VideoWriter(str(name) + '.mp4', cv2.VideoWriter_fourcc('m', 'p', '4', 'v'), fps, size)
+    for i in range(self.obs_cnt):
+      frame = self._get_image(sc=sc,idx=i)
+      out.write(frame)
+    out.release()
 
   def close(self):
     if self.viewer is not None:
