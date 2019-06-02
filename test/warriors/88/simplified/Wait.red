@@ -1,6 +1,6 @@
 ;redcode
 ;name Wait 
-;assert CORESIZE == 8000
+;assert 1
 
 START	jmp	$ 0,	$ 0	
 

@@ -257,8 +257,12 @@ if __name__ == '__main__':
         '--play',
         ],
         std='icws_88', 
-        # act_type='direct',
-        act_type='progressive',
+        # act_type='direct_discrete',
+        # act_type='direct_continuous',
+        # act_type='direct_hybrid',
+        act_type='prog_discrete',
+        # act_type='prog_continuous',
+        # act_type='prog_hybrid',
         coresize=256,
         maxprocesses=100,
         maxcycles=400,
@@ -270,9 +274,11 @@ if __name__ == '__main__':
           'warriors/88/simplified/Simple_88.red',
         #   'warriors/88/simplified/Dwarf.red',
         #   'warriors/88/simplified/Imp.red'
+        #   'warriors/88/simplified/Wait.red',
         ),
         # initwarrior='warriors/88/simplified/Imp.red',
         verbose=False,
-        randomize=True
+        randomize=True,
+        recordvideo=True
     )
 

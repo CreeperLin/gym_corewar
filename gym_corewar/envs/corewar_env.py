@@ -86,7 +86,7 @@ class CoreWarEnv(gym.Env):
   def __init__(self,
         seed=None,
         std='icws_88', 
-        act_type='progressive',
+        act_type='prog_discrete',
         obs_type='full',
         coresize=8000,
         fieldrange=None,
@@ -104,7 +104,8 @@ class CoreWarEnv(gym.Env):
         warriorauthor='my computer',
         numplayers=2,
         verbose=False,
-        randomize=False
+        randomize=False,
+        recordvideo=False,
         ):
     if (not opponents and not isinstance(opponents, str) and len(opponents) == 0):
       raise ValueError("specify path to opponent warriors")
@@ -132,9 +133,11 @@ class CoreWarEnv(gym.Env):
     self.num_players = numplayers
     self.verbose = verbose
     self.randomize = randomize
-    self.seed(seed)
-    if (not self._seed):
+    self.record_video = recordvideo
+    if (not seed):
       self.seed(0)
+    else:
+      self.seed(seed)
 
     if std=='icws_88':
       self.dim_opcode = dim_opcode_88
@@ -209,21 +212,47 @@ class CoreWarEnv(gym.Env):
     self._reset_warrior()
 
     self.num_insn = self.dim_opcode*self.dim_addrmodes*self.dim_addrmodes
-    if (act_type=='direct'):
+    if (act_type=='direct_discrete'):
       self.dim_action_insn = (self.max_length, )
       self.dim_action_field = (self.max_length, 2)
-      self._parse_act = self._parse_act_direct
-      # self.action_space = Tuple((
-      #                           Box(low=0, high=self.num_insn-1,
-      #                               shape=self.dim_action_insn, dtype=np.uint16),
-      #                           # Box(low=-self.core_size/2+1, high=self.core_size/2,
-      #                           Box(low=0, high=self.core_size-1,
-      #                               shape=self.dim_action_field, dtype=np.uint16)))
-      self.action_space = MultiDiscrete([self.num_insn]*self.max_length+[self.field_range]*self.max_length+[self.field_range]*self.max_length)
-    elif (act_type=='progressive'):
-      self._parse_act = self._parse_act_prog
+      self._parse_act = self._parse_act_direct_disc
+      self.action_space = MultiDiscrete([self.num_insn]*self.max_length + 
+                                        [self.field_range]*self.max_length + 
+                                        [self.field_range]*self.max_length)
+    elif (act_type=='direct_continuous'):
+      self.dim_action_insn = (self.max_length, self.num_insn)
+      self.dim_action_field = (self.max_length, 2)
+      self._parse_act = self._parse_act_direct_cont
+      ilow = np.full(self.dim_action_insn, 0.0)
+      ihigh = np.full(self.dim_action_insn, 1.0)
+      flow = np.full(self.dim_action_field, 0.0)
+      fhigh = np.full(self.dim_action_field, self.field_range-1)
+      low = np.concatenate((ilow, flow), axis=1)
+      high = np.concatenate((ihigh, fhigh), axis=1)
+      self.action_space = Box(low=low, high=high, dtype=np.float32)
+    elif (act_type=='direct_hybrid'):
+      self.dim_action_field = (self.max_length, 2)
+      self._parse_act = self._parse_act_direct_hybd
+      self.action_space = Tuple((
+                                MultiDiscrete([self.num_insn]*self.max_length),
+                                Box(low=0, high=self.field_range-1,
+                                    shape=self.dim_action_field, dtype=np.uint16)))
+    elif (act_type=='prog_discrete'):
+      self._parse_act = self._parse_act_prog_disc
       self.action_space = MultiDiscrete([dim_progress_act, self.max_length,
                                         self.num_insn, self.field_range, self.field_range])
+    elif (act_type=='prog_continuous'):
+      self._parse_act = self._parse_act_prog_cont
+      self.action_space = Box(low=np.array([0.0]*dim_progress_act + [0.0] + [0.0]*self.num_insn + [0.0]*2),
+                              high=np.array([1.0]*dim_progress_act + [self.max_length] + [1.0]*self.num_insn + [self.field_range]*2), dtype=np.float32)
+    elif (act_type=='prog_hybrid'):
+      self._parse_act = self._parse_act_prog_hybd
+      self.action_space = Tuple((
+                                Discrete(dim_progress_act),
+                                Box(low=0, high=self.max_length-1, shape=(1,), dtype=np.uint16),
+                                Discrete(self.num_insn),
+                                Box(low=0, high=self.field_range-1, shape=(2,), dtype=np.uint16)
+                                ))
     else:
       raise ValueError("invalid action space type")
                             
@@ -239,7 +268,6 @@ class CoreWarEnv(gym.Env):
                                     shape=self.dim_obs_insn, dtype=np.uint8),
                                 'bmode': Box(low=0, high=self.dim_addrmodes-1, 
                                     shape=self.dim_obs_insn, dtype=np.uint8),
-                                # Box(low=-self.core_size/2+1, high=self.core_size/2,
                                 'fields':Box(low=0, high=self.core_size-1,
                                     shape=self.dim_obs_field, dtype=np.uint16),
                                 'proc': Box(low=0, high=self.core_size-1, 
@@ -279,6 +307,20 @@ class CoreWarEnv(gym.Env):
       ys = i // row
       xs = i % row
       img[ys*sc:(ys+1)*sc,xs*sc:(xs+1)*sc,:] = p
+    for i in range(self.max_proc):
+      t = self.procdump[idx,i]
+      if (t==0): continue
+      t-=1
+      ys = t // row
+      xs = t % row
+      img[ys*sc : ys*sc+sc//2, xs*sc : xs*sc+sc//2, :] = [i % 256, (i**2) % 256, (i**3) % 256]
+    for i in range(self.max_proc):
+      t = self.procdump[idx,i+self.max_proc]
+      if (t==0): continue
+      t-=1
+      ys = t // row
+      xs = t % row
+      img[ys*sc+sc//2:ys*sc+sc, xs*sc+sc//2:xs*sc+sc,:] = [i % 256, (i**2) % 256, (i**3) % 256]
     return img
 
   def step(self, action):
@@ -301,7 +343,7 @@ class CoreWarEnv(gym.Env):
       if (self.cycles % self.obs_dump_intv == 0):
         # self.log('dump %d' % obs_cnt)
         self.coredump[self.obs_cnt, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
-        # self.procdump[self.obs_cnt, :] = np.array(self.mars.dumpproc(), dtype=np.uint16)
+        self.procdump[self.obs_cnt, :] = np.array(self.mars.dumpproc(), dtype=np.uint16) + 1
         self.obs_cnt+=1
       
       res = self.mars.step()
@@ -326,7 +368,7 @@ class CoreWarEnv(gym.Env):
     self.log('cycle: %d' % (self.cycles))
 
     if (self.match>0):
-      print('winner %d!' % len(self.winners))
+      print('winner %d!' % self.wincount)
       print('cycle: %d seed %d' % (self.cycles, self._seed))
       c = self.sum_proc.shape[0]
       for i in range(self.sum_proc.shape[1]):
@@ -334,74 +376,99 @@ class CoreWarEnv(gym.Env):
         print('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
       print(self.warrior)
       if (self.cycles > self.max_cycle // 2):
-        self.record_coredump()
         self.winners.append(self.warrior.instructions.copy())
+        if (self.record_video):
+          self.record_coredump()
+      self.wincount += 1
 
     self.steps += 1
     if (self.steps >= self.max_steps):
       done = True
     return self._get_obs(), self._get_reward(), done, {'match':self.match}
 
-  def _parse_act_prog(self, action):
+  def _get_softmax(self, z, a):
+    return np.argmax(np.exp(z)/sum(np.exp(z)), axis=a)
+
+  def _parse_act_prog_disc(self, action):
     _pact, _pnum, _insn, _afield, _bfield = action
-    clen = len(self.warrior.instructions)
-    opcode = OPCODES[self._OPCODE(_insn)]
-    amode = MODES[self._AMODE(_insn)]
-    bmode = MODES[self._BMODE(_insn)]
-    afield = int(_afield)
-    bfield = int(_bfield)
-    idx = _pnum
-    # if (idx >= clen):
-      # idx = clen - 1
-    if _pact == 0: # NOOP
+    self._apply_act_prog(_pact, _pnum, _insn, _afield, _bfield)
+
+  def _parse_act_prog_cont(self, action):
+    _pact = self._get_softmax(action[:3], 0)
+    _pnum = action[3]
+    _insn = self._get_softmax(action[4:4+self.num_insn], 0)
+    _afield = action[-2]
+    _bfield = action[-1]
+    self._apply_act_prog(_pact, _pnum, _insn, _afield, _bfield)
+
+  def _parse_act_prog_hybd(self, action):
+    _pact, _pnum, _insn, _field = action
+    _afield = _field[0]
+    _bfield = _field[1]
+    self._apply_act_prog(_pact, _pnum, _insn, _afield, _bfield)
+
+  def _apply_act_prog(self, act, idx, insn, afield, bfield):
+    opcode = OPCODES[self._OPCODE(insn)]
+    amode = MODES[self._AMODE(insn)]
+    bmode = MODES[self._BMODE(insn)]
+    idx = int(idx)
+    if idx >= self.max_length:
+      idx = self.max_length-1
+    if act == 0: # NOOP
       return
-    elif _pact == 1: # INSERT FRONT
-      # if (clen>=self.max_length):
-        # return
-      insn = self._get_inst(coresize = self.core_size)
-      insn.opcode = opcode
-      insn.amode = amode
-      insn.bmode = bmode
-      insn.afield = afield
-      insn.bfield = bfield
-      self.insns[idx] = insn
-      # self.warrior.instructions.insert(idx, insn)
-    elif _pact == 2: # DELETE FRONT
-      # if clen > 1:
-        # if (idx == clen):
-          # idx -= 1
-        # self.warrior.instructions.pop(idx)
+    elif act == 1: # INSERT FRONT
+      _insn = self._get_inst(coresize = self.core_size)
+      _insn.opcode = opcode
+      _insn.amode = amode
+      _insn.bmode = bmode
+      _insn.afield = int(afield)
+      _insn.bfield = int(bfield)
+      self.insns[idx] = _insn
+    elif act == 2: # DELETE FRONT
       self.insns[idx] = None
-    # elif _pact == 3: # MODIFY FRONT
-      # self.warrior.instructions[i] = insn
     else:
       raise ValueError("undefined prog_act")
 
     self.warrior.instructions.clear()
     for i in range(len(self.insns)):
-      if (not self.insns[i]): continue
+      if (not self.insns[i]):
+        # self.warrior.instructions.append(self._get_inst(self.core_size))
+        continue
       self.warrior.instructions.append(self.insns[i])
     if (len(self.warrior.instructions)==0):
-      insn = self._get_inst(self.core_size)
-      self.warrior.instructions.append(insn)
+      self.warrior.instructions.append(self._get_inst(self.core_size))
 
-  def _parse_act_direct(self, action):
-    # _insn, _field = action
-    # _afield = _field[:,0]
-    # _bfield = _field[:,1]
+  def _parse_act_direct_disc(self, action):
     _insn = action[0:self.max_length]
     _afield = action[self.max_length:2*self.max_length]
     _bfield = action[2*self.max_length:3*self.max_length]
-    clen = _insn.shape[0]
+    self._apply_act_direct(_insn, _afield, _bfield)
+
+  def _parse_act_direct_cont(self, action):
+    _insn = self._get_softmax(action[:,:-2], 1)
+    _afield = action[:,-2]
+    _bfield = action[:,-1]
+    self._apply_act_direct(_insn, _afield, _bfield)
+
+  def _parse_act_direct_hybd(self, action):
+    _insn, _field = action
+    _afield = _field[:,0]
+    _bfield = _field[:,1]
+    self._apply_act_direct(_insn, _afield, _bfield)
+
+  def _apply_act_direct(self, insn, afield, bfield):
     self.warrior.instructions.clear()
-    for i in range(clen):
-      insn = self._get_inst(coresize = self.core_size)
-      insn.opcode = OPCODES[self._OPCODE(_insn[i])]
-      insn.amode = MODES[self._AMODE(_insn[i])]
-      insn.bmode = MODES[self._BMODE(_insn[i])]
-      insn.afield = int(_afield[i])
-      insn.bfield = int(_bfield[i])
-      self.warrior.instructions.append(insn)
+    op = self._OPCODE(insn)
+    amode = self._AMODE(insn)
+    bmode = self._BMODE(insn)
+    for i in range(self.max_length):
+      _insn = self._get_inst(coresize = self.core_size)
+      _insn.opcode = OPCODES[op[i]]
+      _insn.amode = MODES[amode[i]]
+      _insn.bmode = MODES[bmode[i]]
+      _insn.afield = int(afield[i])
+      _insn.bfield = int(bfield[i])
+      self.warrior.instructions.append(_insn)
     self.warrior.start = int(self.max_length / 2)
 
   def _get_obs_none(self):
@@ -456,6 +523,7 @@ class CoreWarEnv(gym.Env):
     self._reset()
     self.steps = 0
     self.winners = []
+    self.wincount = 0
     self.last_score = 0
     self._reset_warrior()
     self.opponent = self.opponents[0]
@@ -500,8 +568,8 @@ class CoreWarEnv(gym.Env):
 
   def record_coredump(self):
     import cv2
-    fps = 24
-    name = 'winner'+str(len(self.winners))
+    fps = 10
+    name = 'winner'+str(self.wincount)
     sc = 20
     row = int(np.sqrt(self.core_size))
     img_w = row * sc
@@ -520,4 +588,4 @@ class CoreWarEnv(gym.Env):
 
   def seed(self, s):
     np.random.seed(s)
-    self._seed = np.random.randint(low=2*self.min_dist, high=self.core_size)
+    self._seed = np.random.randint(low=self.min_dist, high=self.core_size)

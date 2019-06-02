@@ -24,10 +24,14 @@ if __name__ == '__main__':
 
     env = gym.make(args.env_id,
         std='icws_88', 
-        # act_type='direct',
-        act_type='progressive',
+        # act_type='direct_discrete',
+        # act_type='direct_continuous',
+        # act_type='direct_hybrid',
+        # act_type='prog_discrete',
+        act_type='prog_continuous',
+        # act_type='prog_hybrid',
         coresize=1024,
-        maxprocesses=800,
+        maxprocesses=512,
         maxcycles=2000,
         maxsteps=1000,
         dumpintv=4,
@@ -39,6 +43,7 @@ if __name__ == '__main__':
         #   'warriors/88/simplified/MaxProcess.red'
         ),
         initwarrior='warriors/88/simplified/Imp.red',
+        recordvideo=True
     )
 
     # You provide the directory to write to (can be an existing

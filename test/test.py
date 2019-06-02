@@ -4,20 +4,28 @@ import gym_corewar
 if __name__=="__main__":
   env = gym.make('CoreWar-v0',
     std='icws_88', 
-    # act_type='direct',
-    # act_type='progressive',
-    # coresize=8000,
-    # maxprocesses=8000,
-    # maxcycles=10000,
-    # dumpintv=100,
+    # act_type='direct_discrete',
+    act_type='direct_continuous',
+    # act_type='direct_hybrid',
+    # act_type='prog_discrete',
+    # act_type='prog_continuous',
+    # act_type='prog_hybrid',
+    coresize=1024,
+    maxprocesses=512,
+    maxcycles=2000,
+    dumpintv=1,
     mindistance=32,
     maxlength=32,
     opponents=(
       # 'warriors/88/simplified/Imp.red',
       # 'warriors/88/simplified/Dwarf.red',
-      'warriors/88/simplified/Simple_88.red'
+      # 'warriors/88/simplified/Simple_88.red'
+      'warriors/88/simplified/Wait.red'
     ),
-    verbose=True
+    # initwarrior='warriors/88/simplified/Imp.red',
+    randomize=True,
+    verbose=True,
+    recordvideo=True,
   )
   obs = env.reset()
   steps = 0
@@ -29,7 +37,7 @@ if __name__=="__main__":
   for _ in range(epoch):
     print('step %d' % _)
     # env.render('ansi')
-    env.render('human')
+    # env.render('human')
     a = env.action_space.sample()
     obs, r, done, info = env.step(a)
     m = info['match']
