@@ -89,10 +89,12 @@ class CoreWarEnv(gym.Env):
         act_type='progressive',
         obs_type='full',
         coresize=8000,
+        fieldrange=8000,
         maxprocesses=8000,
         maxcycles=10000,
-        maxrounds=1000,
+        maxsteps=1000,
         dumpintv=5,
+        dumprange=4000,
         mindistance=25,
         maxlength=25,
         pspacesize=None,
@@ -108,14 +110,20 @@ class CoreWarEnv(gym.Env):
       raise ValueError("specify path to opponent warriors")
     if (numplayers>2):
       raise ValueError("multi-warrior not supported")
+    if (mindistance>coresize):
+      raise ValueError("mindistance > coresize")
     self.viewer = None
     self.core_size = coresize
+    self.field_range = fieldrange % coresize
     self.max_proc = maxprocesses
     self.max_cycle = maxcycles
-    self.max_rounds = maxrounds
+    self.max_steps = maxsteps
     self.min_dist = mindistance
     self.max_length = maxlength
     self.obs_dump_intv = dumpintv
+    if (dumprange > self.core_size // 2):
+      dumprange = self.core_size // 2
+    self.obs_dump_range = dumprange
     self.num_players = numplayers
     self.verbose = verbose
     self.randomize = randomize
@@ -190,20 +198,10 @@ class CoreWarEnv(gym.Env):
       self.log('reading warrior in %s' % (opponents[i]))
       self.opponents.append(self.parser.parse_file(opponents[i]))
 
-    if (not initwarrior):
-      self.warrior = Corewar.Warrior()
-      self.warrior.start = 0
-      insn = self._get_inst(self.core_size)
-      insn.opcode = OPCODES[0]
-      insn.amode = MODES[0]
-      insn.bmode = MODES[0]
-      insn.afield = 0
-      insn.bfield = 0 
-      self.warrior.instructions.append(insn)
-    else:
-      self.warrior = self.parser.parse_file(initwarrior)
-    self.warrior.name = warriorname
-    self.warrior.author = warriorauthor
+    self.init_warrior = initwarrior
+    self.wname = warriorname
+    self.wauthor = warriorauthor
+    self._reset_warrior()
 
     self.num_insn = self.dim_opcode*self.dim_addrmodes*self.dim_addrmodes
     if (act_type=='direct'):
@@ -218,11 +216,6 @@ class CoreWarEnv(gym.Env):
       #                               shape=self.dim_action_field, dtype=np.uint16)))
       self.action_space = MultiDiscrete([self.num_insn]*self.max_length+[self.core_size]*self.max_length+[self.core_size]*self.max_length)
     elif (act_type=='progressive'):
-      self.insns = []
-      for i in range(len(self.warrior.instructions)):
-        self.insns.append(self.warrior.instructions[i])
-      for i in range(self.max_length-len(self.insns)):
-        self.insns.append(None)
       self._parse_act = self._parse_act_prog
       self.action_space = MultiDiscrete([dim_progress_act, self.max_length,
                                         self.num_insn, self.core_size, self.core_size])
@@ -232,8 +225,8 @@ class CoreWarEnv(gym.Env):
     self.dim_obs_sample = int(self.max_cycle // self.obs_dump_intv)
     if (obs_type == 'full'):
       self._get_obs = self._get_obs_full
-      self.dim_obs_insn  = (self.dim_obs_sample, self.core_size, )
-      self.dim_obs_field = (self.dim_obs_sample, self.core_size, 2)
+      self.dim_obs_insn  = (self.dim_obs_sample, self.obs_dump_range * 2, )
+      self.dim_obs_field = (self.dim_obs_sample, self.obs_dump_range * 2, 2)
       self.observation_space = Dict({
                                 'op': Box(low=0, high=self.dim_opcode-1, 
                                     shape=self.dim_obs_insn, dtype=np.uint8),
@@ -290,13 +283,12 @@ class CoreWarEnv(gym.Env):
 
     self._parse_act(action)
 
-    # res = self.mars.open((self.opponent, self.opponent), seed = self._seed)
+    self.log('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self._seed))
+
     res = self.mars.open((self.warrior, self.opponent), seed = self._seed)
     
     if (res!=0):
       raise ValueError("error opening MARS")
-
-    self.log('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self._seed))
 
     self.match = -1
     while (True):
@@ -338,8 +330,8 @@ class CoreWarEnv(gym.Env):
       print(self.warrior)
       self.winners.append(self.warrior.instructions.copy())
 
-    self.rounds += 1
-    if (self.rounds >= self.max_rounds):
+    self.steps += 1
+    if (self.steps >= self.max_steps):
       done = True
     return self._get_obs(), self._get_reward(), done, {'match':self.match}
 
@@ -412,9 +404,10 @@ class CoreWarEnv(gym.Env):
     return 0
 
   def _get_obs_full(self):
-    insns = self.coredump[:,:,0]
+    cdwindow = np.concatenate((self.coredump[:,-self.obs_dump_range:,:], self.coredump[:,:self.obs_dump_range,:]), axis=1)
+    insns = cdwindow[:,:,0]
     # return {'insns':insns, 'fields':self.coredump[:,:,1:]}
-    return {'op':self._OPCODE(insns), 'amode':self._AMODE(insns), 'bmode':self._BMODE(insns), 'fields':self.coredump[:,:,1:]}
+    return {'op':self._OPCODE(insns), 'amode':self._AMODE(insns), 'bmode':self._BMODE(insns), 'fields':cdwindow[:,:,1:]}
 
   def _get_obs_warrior(self):
     raise ValueError("not supported")
@@ -447,25 +440,44 @@ class CoreWarEnv(gym.Env):
     self.sum_proc = np.ones((1, self.num_players), dtype=np.uint16)
     self.coredump = np.zeros((self.dim_obs_sample, self.core_size, 3), dtype=np.uint16)
     if (self.randomize):
-      self._seed = np.random.randint(low=2*self.min_dist, high=self.core_size)
+      self._seed = np.random.randint(low=self.min_dist, high=self.core_size)
 
   def reset(self):
     self._reset()
-    self.rounds = 0
+    self.steps = 0
     self.winners = []
     self.last_score = 0
+    self._reset_warrior()
     self.opponent = self.opponents[0]
     res = self.mars.open((self.warrior, self.opponent), seed = self._seed)
     self.coredump[0, :] = np.array(self.mars.dumpcore(), dtype=np.uint16)
     self.mars.stop()
     return self._get_obs()
+  
+  def _reset_warrior(self):
+    if (not self.init_warrior):
+      self.warrior = Corewar.Warrior()
+      self.warrior.start = 0
+      insn = self._get_inst(self.core_size)
+      self.warrior.instructions.append(insn)
+    else:
+      self.warrior = self.parser.parse_file(initwarrior)
+    self.warrior.name = self.wname
+    self.warrior.author = self.wauthor
+    self.insns = []
+    for i in range(len(self.warrior.instructions)):
+      self.insns.append(self.warrior.instructions[i])
+    for i in range(self.max_length-len(self.insns)):
+      self.insns.append(None)
 
   def render(self, mode='human'):
-    from six import StringIO
-    outfile = StringIO() if mode == 'ansi' else sys.stdout
-    outfile.write(str(self.warrior))
-    outfile.write('\n')
-    if mode == 'rgb_array':
+    if mode == 'ansi':
+      from six import StringIO
+      outfile = StringIO()
+      outfile.write(str(self.warrior))
+      outfile.write('\n')
+      return outfile
+    elif mode == 'rgb_array':
       img = self._get_image()
       return img
     elif mode == 'human':
