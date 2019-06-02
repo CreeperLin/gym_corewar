@@ -271,10 +271,10 @@ if __name__ == '__main__':
         mindistance=64,
         maxlength=32,
         opponents=(
-          'warriors/88/simplified/Simple_88.red',
+        #   'warriors/88/simplified/Simple_88.red',
         #   'warriors/88/simplified/Dwarf.red',
         #   'warriors/88/simplified/Imp.red'
-        #   'warriors/88/simplified/Wait.red',
+          'warriors/88/simplified/Wait.red',
         ),
         # initwarrior='warriors/88/simplified/Imp.red',
         verbose=False,
