@@ -84,28 +84,29 @@ class CoreWarEnv(gym.Env):
   metadata = {'render.modes': ['human', 'rgb_array', 'ansi']}
 
   def __init__(self,
-        seed=None,
-        std='icws_88', 
-        act_type='prog_discrete',
-        obs_type='full',
-        coresize=8000,
-        fieldrange=None,
-        maxprocesses=8000,
-        maxcycles=10000,
-        maxsteps=1000,
-        dumpintv=5,
-        dumprange=None,
-        mindistance=25,
-        maxlength=25,
-        pspacesize=None,
-        opponents='warriors/88/simplified/Imp.red',
-        initwarrior=None,
-        warriorname='RL_Imp',
-        warriorauthor='my computer',
-        numplayers=2,
-        verbose=False,
-        randomize=False,
-        recordvideo=False,
+        seed=None,                                                # random seed
+        std='icws_88',                                            # ICWS standard
+        act_type='prog_discrete',                                 # action space type, can be of ['prog'|'direct]_['discrete'|'continuous'|'hybrid']
+        obs_type='full',                                          # observation space type, can be of 'full', the dumps of the full core
+        coresize=8000,                                            # size of the core
+        fieldrange=None,                                          # range of the fields of instructions in action space
+        maxprocesses=8000,                                        # maximum number of warriors in the core
+        maxcycles=10000,                                          # maximum core cycles before tie
+        maxsteps=1000,                                            # maximum steps before 'done' is true
+        dumpintv=5,                                               # interval of the core dump in cycles
+        dumprange=None,                                           # range of the core dump, away from address 0
+        mindistance=25,                                           # minimum distance between warriors
+        maxlength=25,                                             # maximum length of the warriors
+        pspacesize=None,                                          # pspace type
+        opponents='warriors/88/simplified/Imp.red',               # list of file paths to opponent warriors
+        initwarrior=None,                                         # initial warrior
+        warriorname='RL_Imp',                                     # name of the warrior
+        warriorauthor='my computer',                              # author of the warrior
+        numplayers=2,                                             # number of corewar players
+        verbose=False,                                            # output debug msg if true
+        randomize=False,                                          # randomize initial positions of warriors before each run
+        recordvideo=False,                                        # record videos based on result
+        rewardfunc=None,                                          # custom reward function
         ):
     if (not opponents and not isinstance(opponents, str) and len(opponents) == 0):
       raise ValueError("specify path to opponent warriors")
@@ -134,6 +135,9 @@ class CoreWarEnv(gym.Env):
     self.verbose = verbose
     self.randomize = randomize
     self.record_video = recordvideo
+    self._reward_func = self._default_reward
+    if (rewardfunc):
+      self._reward_func = rewardfunc
     if (not seed):
       self.seed(0)
     else:
@@ -329,7 +333,7 @@ class CoreWarEnv(gym.Env):
 
     self._parse_act(action)
 
-    self.log('\n%s fighting with %s (%d)' % (self.warrior.name, self.opponent.name, self._seed))
+    self.log('\n%s fighting with %s (seed=%d)' % (self.warrior.name, self.opponent.name, self._seed))
 
     res = self.mars.open((self.warrior, self.opponent), seed = self._seed)
     
@@ -487,27 +491,29 @@ class CoreWarEnv(gym.Env):
   def _get_obs_warrior(self):
     raise ValueError("not supported")
 
-  def _get_reward(self):
-    c = self.sum_proc.shape[0]
-    for i in range(self.sum_proc.shape[1]):
-      dat = self.sum_proc[:,i]
+  def _default_reward(self, match, cycles, sum_proc):
+    c = sum_proc.shape[0]
+    for i in range(sum_proc.shape[1]):
+      dat = sum_proc[:,i]
       self.log('w%d: end: %d max: %d avg: %f' % (i, dat[c-1], np.max(dat), np.average(dat)))
     w1 = np.array([(1.2**(2*(i+1)/c))/(1.2**2) for i in range(c)])
     w2 = np.array([-1.0]*self.num_players)
     w2[0] = 1.0
-    r_proc = 100 * np.dot (np.dot (w1, self.sum_proc), w2) / (self.cycles + 1) / 2
+    r_proc = 100 * np.dot (np.dot (w1, sum_proc), w2) / (cycles + 1) / 2
     self.log('score proc %f' % r_proc)
-    r_dura = 100 * self.cycles / self.max_cycle
+    r_dura = 100 * cycles / self.max_cycle
     self.log('score dura %f' % r_dura)
-    r_goal = 1 if self.match > 0 else 0 if self.match == 0 else 0.25
-    r_goal = 1000 * r_goal * self.cycles / self.max_cycle
+    r_goal = 1 if match > 0 else 0 if match == 0 else 0.25
+    r_goal = 1000 * r_goal * cycles / self.max_cycle
     self.log('score goal %f' % r_goal)
     score = r_proc + r_dura + r_goal
-    ret = score - self.last_score + 1000 * (1 if self.match > 0 else 0) * self.cycles / self.max_cycle
+    ret = score - self.last_score + 1000 * (1 if match > 0 else 0) * cycles / self.max_cycle
     self.log('score %f reward %f' % (score, ret))
     self.last_score = score
-    
     return ret
+
+  def _get_reward(self):
+    return self._reward_func(match=self.match, cycles=self.cycles, sum_proc=self.sum_proc)
 
   def _reset(self):
     self.turn = 0
