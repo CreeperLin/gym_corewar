@@ -268,8 +268,8 @@ if __name__ == '__main__':
         maxcycles=400,
         maxsteps=10000,
         dumpintv=1,
-        mindistance=64,
-        maxlength=32,
+        # mindistance=64,
+        actmaxlength=32,
         opponents=(
         #   'warriors/88/simplified/Simple_88.red',
         #   'warriors/88/simplified/Dwarf.red',

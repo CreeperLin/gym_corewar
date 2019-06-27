@@ -95,8 +95,9 @@ class CoreWarEnv(gym.Env):
         maxsteps=1000,                                            # maximum steps before 'done' is true
         dumpintv=5,                                               # interval of the core dump in cycles
         dumprange=None,                                           # range of the core dump, away from address 0
-        mindistance=25,                                           # minimum distance between warriors
-        maxlength=25,                                             # maximum length of the warriors
+        mindistance=100,                                          # minimum distance between warriors
+        maxlength=100,                                            # maximum length of all warriors
+        actmaxlength=25,                                          # maximum length of the warrior specified by action space
         pspacesize=None,                                          # pspace type
         opponents='warriors/88/simplified/Imp.red',               # list of file paths to opponent warriors
         initwarrior=None,                                         # initial warrior
@@ -123,8 +124,13 @@ class CoreWarEnv(gym.Env):
     self.max_proc = maxprocesses
     self.max_cycle = maxcycles
     self.max_steps = maxsteps
-    self.min_dist = mindistance
     self.max_length = maxlength
+    self.max_length_ac = actmaxlength
+    if self.max_length_ac > self.max_length:
+      self.max_length_ac = self.max_length
+    self.min_dist = mindistance
+    if self.min_dist < self.max_length:
+      self.min_dist = self.max_length
     self.obs_dump_intv = dumpintv
     if not dumprange:
       dumprange = self.core_size
@@ -152,17 +158,17 @@ class CoreWarEnv(gym.Env):
       self._AMODE = AMODE88
       self._BMODE = BMODE88
       # self._MODIFIER = MODIFIER
-      self.parser = Corewar.Parser(coresize=coresize,
-                              maxprocesses=maxprocesses,
-                              maxcycles=maxcycles,
-                              maxlength=maxlength,
-                              mindistance=mindistance,
+      self.parser = Corewar.Parser(coresize=self.core_size,
+                              maxprocesses=self.max_proc,
+                              maxcycles=self.max_cycle,
+                              maxlength=self.max_length,
+                              mindistance=self.min_dist,
                               standard=Corewar.STANDARD_88)
-      self.mars = Corewar.Benchmarking.MARS_88(coresize = coresize,
-                              maxprocesses = maxprocesses,
-                              maxcycles = maxcycles,
-                              mindistance = mindistance,
-                              maxlength = maxlength)
+      self.mars = Corewar.Benchmarking.MARS_88(coresize = self.core_size,
+                              maxprocesses = self.max_proc,
+                              maxcycles = self.max_cycle,
+                              mindistance = self.min_dist,
+                              maxlength = self.max_length)
     elif std=='icws_94_nop':
       self.dim_opcode = dim_opcode_94_nop
       self.dim_modifiers = dim_modifiers_94_nop
@@ -172,33 +178,18 @@ class CoreWarEnv(gym.Env):
       self._AMODE = AMODE
       self._BMODE = BMODE
       self._MODIFIER = MODIFIER
-      self.parser = Corewar.Parser(coresize=coresize,
-                              maxprocesses=maxprocesses,
-                              maxcycles=maxcycles,
-                              maxlength=maxlength,
-                              mindistance=mindistance,
+      self.parser = Corewar.Parser(coresize=self.core_size,
+                              maxprocesses=self.max_proc,
+                              maxcycles=self.max_cycle,
+                              maxlength=self.max_length,
+                              mindistance=self.min_dist,
                               standard=Corewar.STANDARD_94_NOP)
-      self.mars = Corewar.Benchmarking.MARS_94nop(coresize = coresize,
-                              maxprocesses = maxprocesses,
-                              maxcycles = maxcycles,
-                              mindistance = mindistance,
-                              maxlength = maxlength)
+      self.mars = Corewar.Benchmarking.MARS_94nop(coresize = self.core_size,
+                              maxprocesses = self.max_proc,
+                              maxcycles = self.max_cycle,
+                              mindistance = self.min_dist,
+                              maxlength = self.max_length)
     elif std=='icws_94':
-      self.dim_opcode = dim_opcode_94
-      self.dim_modifiers = dim_modifiers_94
-      self.dim_addrmodes = dim_addrmodes_94
-      self._get_inst = Instruction
-      if not pspacesize:
-          pspacesize = coresize / 16
-      else:
-          pspacesize = pspacesize
-      self.parser = Corewar.Parser(coresize=coresize,
-                              maxprocesses=maxprocesses,
-                              maxcycles=maxcycles,
-                              maxlength=maxlength,
-                              mindistance=mindistance,
-                              pspacesize=pspacesize,
-                              standard=Corewar.STANDARD_94)
       raise ValueError("standard icws94 not supported")
     else:
       raise ValueError("invalid standard")
@@ -217,15 +208,15 @@ class CoreWarEnv(gym.Env):
 
     self.num_insn = self.dim_opcode*self.dim_addrmodes*self.dim_addrmodes
     if (act_type=='direct_discrete'):
-      self.dim_action_insn = (self.max_length, )
-      self.dim_action_field = (self.max_length, 2)
+      self.dim_action_insn = (self.max_length_ac, )
+      self.dim_action_field = (self.max_length_ac, 2)
       self._parse_act = self._parse_act_direct_disc
-      self.action_space = MultiDiscrete([self.num_insn]*self.max_length + 
-                                        [self.field_range]*self.max_length + 
-                                        [self.field_range]*self.max_length)
+      self.action_space = MultiDiscrete([self.num_insn]*self.max_length_ac + 
+                                        [self.field_range]*self.max_length_ac + 
+                                        [self.field_range]*self.max_length_ac)
     elif (act_type=='direct_continuous'):
-      self.dim_action_insn = (self.max_length, self.num_insn)
-      self.dim_action_field = (self.max_length, 2)
+      self.dim_action_insn = (self.max_length_ac, self.num_insn)
+      self.dim_action_field = (self.max_length_ac, 2)
       self._parse_act = self._parse_act_direct_cont
       ilow = np.full(self.dim_action_insn, 0.0)
       ihigh = np.full(self.dim_action_insn, 1.0)
@@ -235,25 +226,25 @@ class CoreWarEnv(gym.Env):
       high = np.concatenate((ihigh, fhigh), axis=1)
       self.action_space = Box(low=low, high=high, dtype=np.float32)
     elif (act_type=='direct_hybrid'):
-      self.dim_action_field = (self.max_length, 2)
+      self.dim_action_field = (self.max_length_ac, 2)
       self._parse_act = self._parse_act_direct_hybd
       self.action_space = Tuple((
-                                MultiDiscrete([self.num_insn]*self.max_length),
+                                MultiDiscrete([self.num_insn]*self.max_length_ac),
                                 Box(low=0, high=self.field_range-1,
                                     shape=self.dim_action_field, dtype=np.uint16)))
     elif (act_type=='prog_discrete'):
       self._parse_act = self._parse_act_prog_disc
-      self.action_space = MultiDiscrete([dim_progress_act, self.max_length,
+      self.action_space = MultiDiscrete([dim_progress_act, self.max_length_ac,
                                         self.num_insn, self.field_range, self.field_range])
     elif (act_type=='prog_continuous'):
       self._parse_act = self._parse_act_prog_cont
       self.action_space = Box(low=np.array([0.0]*dim_progress_act + [0.0] + [0.0]*self.num_insn + [0.0]*2),
-                              high=np.array([1.0]*dim_progress_act + [self.max_length] + [1.0]*self.num_insn + [self.field_range]*2), dtype=np.float32)
+                              high=np.array([1.0]*dim_progress_act + [self.max_length_ac] + [1.0]*self.num_insn + [self.field_range]*2), dtype=np.float32)
     elif (act_type=='prog_hybrid'):
       self._parse_act = self._parse_act_prog_hybd
       self.action_space = Tuple((
                                 Discrete(dim_progress_act),
-                                Box(low=0, high=self.max_length-1, shape=(1,), dtype=np.uint16),
+                                Box(low=0, high=self.max_length_ac-1, shape=(1,), dtype=np.uint16),
                                 Discrete(self.num_insn),
                                 Box(low=0, high=self.field_range-1, shape=(2,), dtype=np.uint16)
                                 ))
@@ -383,6 +374,8 @@ class CoreWarEnv(gym.Env):
         self.winners.append(self.warrior.instructions.copy())
         if (self.record_video):
           self.record_coredump()
+          with open('./winner'+str(wincount)+'.red','w') as f:
+            f.write(str(self.warrior))
       self.wincount += 1
 
     self.steps += 1
@@ -416,8 +409,8 @@ class CoreWarEnv(gym.Env):
     amode = MODES[self._AMODE(insn)]
     bmode = MODES[self._BMODE(insn)]
     idx = int(idx)
-    if idx >= self.max_length:
-      idx = self.max_length-1
+    if idx >= self.max_length_ac:
+      idx = self.max_length_ac-1
     if act == 0: # NOOP
       return
     elif act == 1: # INSERT FRONT
@@ -443,9 +436,9 @@ class CoreWarEnv(gym.Env):
       self.warrior.instructions.append(self._get_inst(self.core_size))
 
   def _parse_act_direct_disc(self, action):
-    _insn = action[0:self.max_length]
-    _afield = action[self.max_length:2*self.max_length]
-    _bfield = action[2*self.max_length:3*self.max_length]
+    _insn = action[0:self.max_length_ac]
+    _afield = action[self.max_length_ac:2*self.max_length_ac]
+    _bfield = action[2*self.max_length_ac:3*self.max_length_ac]
     self._apply_act_direct(_insn, _afield, _bfield)
 
   def _parse_act_direct_cont(self, action):
@@ -465,7 +458,7 @@ class CoreWarEnv(gym.Env):
     op = self._OPCODE(insn)
     amode = self._AMODE(insn)
     bmode = self._BMODE(insn)
-    for i in range(self.max_length):
+    for i in range(self.max_length_ac):
       _insn = self._get_inst(coresize = self.core_size)
       _insn.opcode = OPCODES[op[i]]
       _insn.amode = MODES[amode[i]]
@@ -473,7 +466,7 @@ class CoreWarEnv(gym.Env):
       _insn.afield = int(afield[i])
       _insn.bfield = int(bfield[i])
       self.warrior.instructions.append(_insn)
-    self.warrior.start = int(self.max_length / 2)
+    self.warrior.start = int(self.max_length_ac / 2)
 
   def _get_obs_none(self):
     return (np.zeros(shape=self.dim_obs_insn, dtype=np.uint16), np.zeros(shape=self.dim_obs_field, dtype=np.uint16))
